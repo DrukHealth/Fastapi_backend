@@ -44,9 +44,10 @@ app.add_middleware(
 # ------------------------------
 # MongoDB connection
 # ------------------------------
-client = MongoClient("mongodb://localhost:27017")
+MONGO_URI = "mongodb+srv://12220045gcit_db_user:Kunzangc_2@cluster0.rskaemg.mongodb.net/drukhealth?retryWrites=true&w=majority"
+client = MongoClient(MONGO_URI)
 db = client["drukhealth"]
-ctg_collection = db["ctgscans"]  # ✅ store everything here
+ctg_collection = db["ctgscans"]
 
 # ------------------------------
 # Cloudinary Config
