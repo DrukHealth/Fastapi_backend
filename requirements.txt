@@ -10,3 +10,5 @@ numpy
 pandas
 scipy
 pydantic
+bson
+imbalanced-learn
