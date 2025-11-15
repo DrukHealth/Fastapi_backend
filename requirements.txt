@@ -1,12 +1,12 @@
 fastapi
-uvicorn
-pandas
-numpy
-pillow
+uvicorn[standard]
+pymongo
+python-dotenv
 python-multipart
- opencv-python 
- scipy 
- pillow 
- joblib
- imblearn
- scikit-learn
+cloudinary
+joblib
+opencv-python-headless
+numpy
+pandas
+scipy
+pydantic
