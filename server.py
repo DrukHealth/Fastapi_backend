@@ -31,7 +31,7 @@ app = FastAPI(title="Druk Health CTG AI Backend")
 
 origins = [
     "http://localhost:5173",
-    "https://drukhealthrfh.vercel.app",
+    "https://drukhealthfe.vercel.app",
 ]
 
 app.add_middleware(
