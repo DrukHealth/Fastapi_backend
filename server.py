@@ -44,7 +44,7 @@ app.add_middleware(
 # ------------------------------
 # MongoDB connection
 # ------------------------------
-MONGO_URI = "mongodb+srv://12220045gcit:Kunzangc_2@cluster0.rskaemg.mongodb.net/drukhealth?retryWrites=true&w=majority"
+MONGO_URI = "mongodb+srv://12220045gcit:Kunzang1234@cluster0.rskaemg.mongodb.net/drukhealth?retryWrites=true&w=majority"
 client = MongoClient(MONGO_URI)
 db = client["drukhealth"]
 ctg_collection = db["ctgscans"]
