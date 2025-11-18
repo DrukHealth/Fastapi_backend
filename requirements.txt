@@ -11,3 +11,4 @@ pandas
 scipy
 pydantic
 imbalanced-learn
+requests
