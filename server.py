@@ -1095,7 +1095,7 @@ async def predict_ctg(file: UploadFile = File(...)):
         # ⭐ 1. RUN NYCKEL FIRST — CTG Detection
         # ==================================================
         files = {"data": open(tmp_path, "rb")}
-        headers = {"Authorization": f"Bearer {NYCKEL_ACCESS_TOKEN}"}
+        headers = {"Authorization": f"Bearer {NYCKEL_KEY}"}
 
         nyckel_response = requests.post(NYCKEL_URL, files=files, headers=headers)
         nyckel_data = nyckel_response.json()
