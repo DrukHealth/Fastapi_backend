@@ -12,3 +12,4 @@ scipy
 pydantic
 imbalanced-learn
 requests
+PIL
