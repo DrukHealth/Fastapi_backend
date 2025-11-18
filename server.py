@@ -534,6 +534,29 @@
 #     uvicorn.run(app, host="127.0.0.1", port=8000)
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 # ==========================================
 # server.py — Druk Health CTG AI Backend (FINAL - Using drukhealth.ctgscans + Cloudinary)
 # ==========================================
@@ -875,6 +898,35 @@
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 # ==========================================
 # server.py — Druk Health CTG AI Backend (FINAL - Using drukhealth.ctgscans + Cloudinary + Nyckel)
 # ==========================================
@@ -895,10 +947,11 @@ from collections import Counter
 import cloudinary
 import cloudinary.uploader
 from dotenv import load_dotenv
-import requests  # <-- ⭐ ADDED for Nyckel API
+from PIL import Image
+import requests
 
 # ------------------------------
-# Load environment (optional)
+# Load environment
 # ------------------------------
 load_dotenv()
 
@@ -941,22 +994,44 @@ cloudinary.config(
 )
 
 # ------------------------------
-# Nyckel API config  ⭐ ADDED
-# ------------------------------
-# # --- Nyckel API config ---
-NYCKEL_KEY = "eyJhbGciOiJSUzI1NiIsInR5cCI6ImF0K2p3dCJ9.eyJpc3MiOiJodHRwczovL3d3dy5ueWNrZWwuY29tIiwibmJmIjoxNzYyODc5MzMxLCJpYXQiOjE3NjI4NzkzMzEsImV4cCI6MTc2Mjg4MjkzMSwic2NvcGUiOlsiYXBpIl0sImNsaWVudF9pZCI6Imh5Njl3dHN4ZG9vczkwbzg1NDJua3FmNTg2eXN2b2ZsIiwianRpIjoiQkRFNjJCMDhEOUUzNkUwNDgyNzYwQTdFQTdGMDQ1NjIifQ.hY7znBCxWQ-DSKTa6Ho8k6Tol6J1fiRrzR5bh-j8naTg_ltdm2Gg1PZthrI5PKTgmfWBXIeZndumXi4E8pNwQgVB595BJ9vDqTIsJb-y-yVVnOshq1JZa863HMeg0cn3emr0jpeAO6u5x9WLgdevAJmZDpdYh1qLNMKruZ2aD6MnVosM39o5ioGLucNqtzM4vqGiiHWiXVgZ5A-NWBGOTD8X1Kg1Y0hXv7GYakVtFC43uh90ptuk8FUsCA4BmJiZ14BDN9V_F-SPHsLO4afte10anxJFhEsEeoMvBB3j2U8COkTKGwnvnU3QA_DQCVYx9zoy3Q10JJQlkvmg2o9u_w"
-NYCKEL_FUNCTION_ID = "cdk3y4u8ff799uh3"
-NYCKEL_URL = f"https://www.nyckel.com/v1/functions/{NYCKEL_FUNCTION_ID}/invoke"
-
-# ------------------------------
 # Load trained model
 # ------------------------------
 model_ctg_class = joblib.load("decision_tree_all_cardio_features.pkl")
 print("✅ Loaded Decision Tree model with features:\n", model_ctg_class.feature_names_in_)
 
-# =======================================================
-# HELPER FUNCTIONS (unchanged)
-# =======================================================
+# ------------------------------
+# Nyckel API config
+# ------------------------------
+NYCKEL_KEY = "eyJhbGciOiJSUzI1NiIsInR5cCI6ImF0K2p3dCJ9.eyJpc3MiOiJodHRwczovL3d3dy5ueWNrZWwuY29tIiwibmJmIjoxNzYyODc5MzMxLCJpYXQiOjE3NjI4NzkzMzEsImV4cCI6MTc2Mjg4MjkzMSwic2NvcGUiOlsiYXBpIl0sImNsaWVudF9pZCI6Imh5Njl3dHN4ZG9vczkwbzg1NDJua3FmNTg2eXN2b2ZsIiwianRpIjoiQkRFNjJCMDhEOUUzNkUwNDgyNzYwQTdFQTdGMDQ1NjIifQ.hY7znBCxWQ-DSKTa6Ho8k6Tol6J1fiRrzR5bh-j8naTg_ltdm2Gg1PZthrI5PKTgmfWBXIeZndumXi4E8pNwQgVB595BJ9vDqTIsJb-y-yVVnOshq1JZa863HMeg0cn3emr0jpeAO6u5x9WLgdevAJmZDpdYh1qLNMKruZ2aD6MnVosM39o5ioGLucNqtzM4vqGiiHWiXVgZ5A-NWBGOTD8X1Kg1Y0hXv7GYakVtFC43uh90ptuk8FUsCA4BmJiZ14BDN9V_F-SPHsLO4afte10anxJFhEsEeoMvBB3j2U8COkTKGwnvnU3QA_DQCVYx9zoy3Q10JJQlkvmg2o9u_w"
+NYCKEL_FUNCTION_ID = "cdk3y4u8ff799uh3"
+NYCKEL_URL = f"https://www.nyckel.com/v1/functions/{NYCKEL_FUNCTION_ID}/invoke"
+
+def classify_with_nyckel(image_path):
+    """Send an image to Nyckel API and return prediction JSON."""
+    try:
+        tmp_path = image_path
+        if image_path.lower().endswith(".png"):
+            tmp_path = image_path.replace(".png", ".jpg")
+            with Image.open(image_path) as im:
+                im.convert("RGB").save(tmp_path, format="JPEG")
+
+        with open(tmp_path, "rb") as f:
+            files = {"data": ("image.jpg", f, "image/jpeg")}
+            headers = {"Authorization": f"Bearer {NYCKEL_KEY}"}
+            response = requests.post(NYCKEL_URL, headers=headers, files=files)
+            response.raise_for_status()
+            return response.json()
+    except Exception as e:
+        return {"error": str(e)}
+    finally:
+        if tmp_path != image_path and os.path.exists(tmp_path):
+            os.remove(tmp_path)
+
+# ------------------------------
+# CTG Helpers
+# ------------------------------
+# # (Keep your original extract_ctg_signals and compute_model_features functions)
+# # --- OMITTED FOR BREVITY, use exactly your original code ---
 def extract_ctg_signals(image_path, fhr_top_ratio=0.55, bpm_per_cm=30,
                         toco_per_cm=25, paper_speed_cm_min=2, fhr_min_line=50):
     """Extract FHR and UC signals from CTG image using OpenCV."""
@@ -996,9 +1071,7 @@ def extract_ctg_signals(image_path, fhr_top_ratio=0.55, bpm_per_cm=30,
 
     return fhr_signal, uc_signal, time_axis
 
-# (all your functions stay exactly the same — not repeated here to save space)
-# extract_ctg_signals()
-# compute_model_features()
+
 def compute_model_features(fhr_signal, uc_signal, time_axis):
     """Compute SisPorto-style features for CTG classification."""
     features = {}
@@ -1080,58 +1153,67 @@ def compute_model_features(fhr_signal, uc_signal, time_axis):
 def home():
     return {"message": "CTG AI Prediction API is running 🚀"}
 
-# -------------------------------------------------------
-# PREDICT & SAVE (NOW WITH NYCKEL CTG DETECTION)
-# -------------------------------------------------------
-from fastapi import FastAPI, UploadFile, File, HTTPException
-from fastapi.responses import JSONResponse
-import shutil
-import tempfile
-import os
 
-app = FastAPI()
-
-# Dummy prediction function
-def dummy_predict(image_path: str):
-    # Replace with your real model inference
-    return {"prediction": "Normal", "confidence": 0.95}
-
+# ------------------------------
+# PREDICT endpoint (with Nyckel)
+# ------------------------------
 @app.post("/predict/")
-async def predict(file: UploadFile = File(...)):
-    # Ensure only image files
-    if not file.filename.lower().endswith((".png", ".jpg", ".jpeg")):
-        raise HTTPException(status_code=400, detail="Invalid file type.")
-
-    tmp_file_path = None
+async def predict_ctg(file: UploadFile = File(...)):
+    contents = await file.read()
+    tmp_path = None
     try:
-        # Create a temp file safely (Windows-safe)
-        tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".jpg")
-        tmp_file_path = tmp_file.name
-        # Copy uploaded file content to temp file
-        shutil.copyfileobj(file.file, tmp_file)
-        # Close both files so Windows can access them
-        tmp_file.close()
-        file.file.close()
+        # Save the uploaded file
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmp:
+            tmp.write(contents)
+            tmp_path = tmp.name
 
-        # ----- Process the image here -----
-        prediction = dummy_predict(tmp_file_path)
+        # --- Local model prediction ---
+        fhr, uc, t = extract_ctg_signals(tmp_path)
+        features = compute_model_features(fhr, uc, t)
+        df = pd.DataFrame([features])[model_ctg_class.feature_names_in_]
+        local_pred = model_ctg_class.predict(df)[0]
+        local_label = {1: "Normal", 2: "Suspect", 3: "Pathologic"}[local_pred]
 
-        return JSONResponse(content=prediction)
+        # --- Nyckel prediction ---
+        nyckel_result = classify_with_nyckel(tmp_path)
 
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        # --- Cloudinary upload ---
+        upload_result = cloudinary.uploader.upload(tmp_path, folder="drukhealth_ctg")
+        image_url = upload_result.get("secure_url")
+
+        # --- MongoDB storage ---
+        record = {
+            "timestamp": datetime.utcnow() + timedelta(hours=6),
+            "ctgDetected": local_label,
+            "features": features,
+            "imageUrl": image_url,
+            "nyckel_prediction": nyckel_result
+        }
+        result = ctg_collection.insert_one(record)
+
+        return {
+            "local_prediction": {"prediction": int(local_pred), "label": local_label},
+            "nyckel_prediction": nyckel_result,
+            "features": features,
+            "imageUrl": image_url,
+            "record_id": str(result.inserted_id)
+        }
 
     finally:
-        # Delete temp file safely
-        if tmp_file_path and os.path.exists(tmp_file_path):
-            os.remove(tmp_file_path)
+        if tmp_path and os.path.exists(tmp_path):
+            os.remove(tmp_path)
 
+# ------------------------------
+# Keep all other routes intact
+# /records, /records/{id}, /api/analysis
+# ------------------------------
 
 # -------------------------------------------------------
-# GET ALL RECORDS (unchanged)
+# GET ALL RECORDS
 # -------------------------------------------------------
 @app.get("/records")
 def get_records():
+    """Return all stored CTG scan records (with image + features only)."""
     try:
         records = list(ctg_collection.find().sort("timestamp", -1))
         formatted = []
@@ -1149,7 +1231,7 @@ def get_records():
         raise HTTPException(status_code=500, detail=str(e))
 
 # -------------------------------------------------------
-# DELETE RECORD (unchanged)
+# DELETE RECORD
 # -------------------------------------------------------
 @app.delete("/records/{record_id}")
 def delete_record(record_id: str):
@@ -1162,10 +1244,11 @@ def delete_record(record_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 # -------------------------------------------------------
-# DASHBOARD ANALYSIS (unchanged)
+# DASHBOARD ANALYSIS
 # -------------------------------------------------------
 @app.get("/api/analysis")
 def get_analysis():
+    """Return summary stats for dashboard charts."""
     records = list(ctg_collection.find({}, {"_id": 0}))
     if not records:
         return {"predictions": [], "nspStats": {"Normal": 0, "Suspect": 0, "Pathologic": 0}}
@@ -1195,3 +1278,15 @@ if __name__ == "__main__":
     import os
     port = int(os.environ.get("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port)
+
+
+
+
+
+
+
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="127.0.0.1", port=8000)
