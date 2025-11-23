@@ -13,4 +13,4 @@ pydantic
 imbalanced-learn
 requests
 Pillow
-
+scikit-learn==1.6.1
