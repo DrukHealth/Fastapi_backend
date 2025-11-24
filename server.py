@@ -94,6 +94,7 @@ app = FastAPI(title="Druk Health CTG AI Backend")
 origins = [
     "http://localhost:5173",
     "https://drukhealthfrontend.vercel.app",
+    "https://fastapi-backend-yrc0.onrender.com",
 ]
 
 app.add_middleware(
@@ -318,8 +319,49 @@ def delete_record(record_id: str):
     if r.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Record not found")
     return {"detail": "Record deleted"}
+@app.get("/api/analysis")
+def get_analysis():
+    records = list(ctg_collection.find({}, {"_id": 0}))
+    if not records:
+        return {"predictions": [], "nspStats": {"Normal": 0, "Suspect": 0, "Pathologic": 0}}
 
-# =======================================================
+    df = pd.DataFrame(records)
+
+    # Convert timestamp
+    df["timestamp"] = pd.to_datetime(df["timestamp"])
+    df["date"] = df["timestamp"].dt.strftime("%Y-%m-%d")
+
+    # Time series summary
+    pivot = df.pivot_table(
+        index="date",
+        columns="ctgDetected",
+        aggfunc="size",
+        fill_value=0
+    ).reset_index()
+
+    pivot = pivot.rename(columns={
+        "Normal": "N",
+        "Suspect": "S",
+        "Pathologic": "P"
+    })
+
+    time_series = pivot.to_dict(orient="records")
+
+    # Total NSP counts
+    from collections import Counter
+    counts = Counter(df["ctgDetected"])
+
+    nspStats = {
+        "Normal": int(counts.get("Normal", 0)),
+        "Suspect": int(counts.get("Suspect", 0)),
+        "Pathologic": int(counts.get("Pathologic", 0)),
+    }
+
+    return {
+        "predictions": time_series,
+        "nspStats": nspStats
+    }
+
 # Run
 # =======================================================
 if __name__ == "__main__":
