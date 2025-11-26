@@ -13,4 +13,5 @@ pydantic
 imbalanced-learn
 requests
 Pillow
+tensorflow
 scikit-learn==1.6.1
