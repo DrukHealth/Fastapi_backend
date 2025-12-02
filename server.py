@@ -402,7 +402,6 @@ import pandas as pd
 import numpy as np
 import joblib
 import cv2
-import shap
 from scipy.signal import find_peaks, medfilt
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
