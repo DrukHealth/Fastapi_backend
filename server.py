@@ -117,7 +117,7 @@ cloudinary.config(
 # ------------------------------
 # Load clinical CTG model & scaler
 # ------------------------------
-model, scaler = joblib.load("clinical_aware_ctg_model .pkl")
+model, scaler = joblib.load("clinical_aware_ctg_model.pkl")
 model_ctg_class = ClinicalAwareCTGModel(model, scaler)
 print("✅ Clinical model loaded successfully")
 
