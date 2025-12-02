@@ -393,25 +393,26 @@
 
 # server.py – FINAL VERSION (CTG 5-Feature Model Integrated)
 
-from fastapi import FastAPI, File, UploadFile, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
+import os
+import tempfile
+import logging
 from datetime import datetime, timedelta
-from pymongo import MongoClient
-from bson import ObjectId
+
 import pandas as pd
 import numpy as np
-import tempfile
 import joblib
 import cv2
-import os
+import shap
 from scipy.signal import find_peaks, medfilt
-from collections import Counter
+from fastapi import FastAPI, File, UploadFile, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from pymongo import MongoClient
+from bson import ObjectId
 import cloudinary
 import cloudinary.uploader
-from dotenv import load_dotenv
 import tensorflow as tf
-import math
-import logging
+
+from dotenv import load_dotenv
 
 # ------------------------------------------------------------
 # ENV + LOGGING
@@ -420,24 +421,15 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO)
 
 # ------------------------------------------------------------
-# CLIENT-FACING LABELS
-# ------------------------------------------------------------
-def convert_to_client_label(num):
-    return {
-        1: "Normal",
-        2: "Suspicious",
-        3: "Pathological"
-    }.get(num, "Unknown")
-
-
-
-# ------------------------------------------------------------
 # FASTAPI
 # ------------------------------------------------------------
 app = FastAPI(title="Druk Health CTG – 5-Feature Model")
 
 origins = [
     "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:5174",
+    "http://127.0.0.1:5174",
     "https://drukhealthfrontend.vercel.app",
     "https://fastapi-backend-yrc0.onrender.com",
 ]
@@ -447,20 +439,17 @@ app.add_middleware(
     allow_origins=origins,
     allow_methods=["*"],
     allow_headers=["*"],
+    allow_credentials=True,
 )
 
-# ------------------------------
-# MongoDB connection
-# ------------------------------
-MONGO_URI = "mongodb+srv://12220045gcit:Kunzang1234@cluster0.rskaemg.mongodb.net/drukhealth?retryWrites=true&w=majority"
-
+# ------------------------------------------------------------
+# MONGODB & CLOUDINARY
+# ------------------------------------------------------------
+MONGO_URI = os.getenv("MONGO_URI") or "mongodb+srv://12220045gcit:Kunzang1234@cluster0.rskaemg.mongodb.net/drukhealth?retryWrites=true&w=majority"
 client = MongoClient(MONGO_URI)
 db = client["drukhealth"]
 ctg_collection = db["ctgscans"]
 
-# ------------------------------
-# Cloudinary config
-# ------------------------------
 cloudinary.config(
     cloud_name=os.getenv("CLOUDINARY_CLOUD_NAME", "dgclndz9b"),
     api_key=os.getenv("CLOUDINARY_API_KEY", "522272821951884"),
@@ -468,36 +457,47 @@ cloudinary.config(
 )
 
 # ------------------------------------------------------------
-# LOAD 5-FEATURE CLASSIFIER
+# LOAD TRAINING DATA + 5-FEATURE MODEL + BINARY CNN
 # ------------------------------------------------------------
+TRAIN_DATA_PATH = r"fetal_health.csv"
+
+
 MODEL_5F_PATH = "ctg_5feature_model.pkl"
+CNN_PATH = "CTG_vs_NonCTG(1).keras"
+
+df_training = pd.read_csv(TRAIN_DATA_PATH) if os.path.exists(TRAIN_DATA_PATH) else None
+numeric_df = df_training.select_dtypes(include=[np.number]) if df_training is not None else None
+if df_training is None:
+    logging.error("Training CSV not found at %s", TRAIN_DATA_PATH)
 
 if not os.path.exists(MODEL_5F_PATH):
     raise FileNotFoundError("Missing model file: ctg_5feature_model.pkl")
-
 model_5f = joblib.load(MODEL_5F_PATH)
-logging.info("✅ Loaded CTG 5-feature model with DecisionTreeClassifier")
 
-
-# ------------------------------------------------------------
-# LOAD BINARY CTG vs NON-CTG CNN
-# ------------------------------------------------------------
-CNN_PATH = "CTG_vs_NonCTG(1).keras"
+if not os.path.exists(CNN_PATH):
+    raise FileNotFoundError("Missing binary CTG model file: CTG_vs_NonCTG(1).keras")
 binary_ctg_model = tf.keras.models.load_model(CNN_PATH)
-logging.info("✅ Loaded CTG vs Non-CTG CNN")
 
+# SHAP explainer for DecisionTree / tree-based models
+try:
+    explainer = shap.TreeExplainer(model_5f)
+    logging.info("✅ SHAP explainer initialized")
+except Exception as e:
+    explainer = None
+    logging.warning("⚠ Could not initialize SHAP explainer: %s", str(e))
+
+# ------------------------------------------------------------
+# HELPER FUNCTIONS
+# ------------------------------------------------------------
+def convert_to_client_label(num):
+    return {1: "Normal", 2: "Suspicious", 3: "Pathological"}.get(num, "Unknown")
 
 def classify_ctg_or_nonctg(img_path):
     img = tf.keras.preprocessing.image.load_img(img_path, target_size=(224, 224))
-    arr = tf.keras.preprocessing.image.img_to_array(img) / 255.0
+    arr = tf.keras.preprocessing.image.img_to_array(img)/255.0
     arr = np.expand_dims(arr, 0)
-    score = float(binary_ctg_model.predict(arr)[0][0])
-    return ("CTG" if score > 0.5 else "Non-CTG"), score
-
-
-# ======================================================================
-# ========================== IMAGE → SIGNAL =============================
-# ======================================================================
+    score = float(binary_ctg_model.predict(arr, verbose=0)[0,0])
+    return ("CTG" if score>0.5 else "Non-CTG"), score
 
 def detect_grid(gray):
     blur = cv2.GaussianBlur(gray, (5,5), 0)
@@ -513,23 +513,18 @@ def detect_grid(gray):
     if len(d)==0: return None
     return int(np.median(d) * 5)
 
-
 def extract_trace(roi):
     blur = cv2.GaussianBlur(roi, (3,3), 0)
-    th = cv2.adaptiveThreshold(blur,255,cv2.ADAPTIVE_THRESH_MEAN_C,
-                               cv2.THRESH_BINARY_INV,15,5)
-
+    th = cv2.adaptiveThreshold(blur,255,cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY_INV,15,5)
     ys=[]
     h,w=th.shape
     for x in range(w):
         idx=np.where(th[:,x]>0)[0]
         ys.append(np.median(idx) if len(idx)>0 else np.nan)
-
     ys=np.array(ys)
     xs=np.arange(len(ys))
     ys[np.isnan(ys)] = np.interp(xs[np.isnan(ys)], xs[~np.isnan(ys)], ys[~np.isnan(ys)])
     return ys
-
 
 def extract_ctg_signals(path):
     img=cv2.imread(path)
@@ -537,135 +532,90 @@ def extract_ctg_signals(path):
     if h>w:
         img=cv2.rotate(img, cv2.ROTATE_90_CLOCKWISE)
         h,w=img.shape[:2]
-
     gray=cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     gray=cv2.equalizeHist(gray)
-
     px_large = detect_grid(gray)
     if px_large is None:
-        px_large=180  # fallback
-
+        px_large=180
     top=int(h*0.05)
     mid=int(h*0.45)
     bottom=int(h*0.95)
-
     fhr_y = extract_trace(gray[top:mid,:]) + top
     uc_y = extract_trace(gray[mid:bottom,:])
-
     bpm_pp = 30/px_large
     ref_y=(top+mid)/2
     fhr_bpm = 140 - (fhr_y - ref_y)*bpm_pp
     fhr_bpm=medfilt(fhr_bpm,7)
     fhr_bpm=np.clip(fhr_bpm,40,220)
-
     sec_per_px = 60/px_large
     fs=1/sec_per_px
-
     uc_norm = (uc_y - np.min(uc_y)) / (np.ptp(uc_y)+1e-6)
     return fhr_bpm, uc_norm, fs
 
-
-# ======================================================================
-# =================== FEATURE COMPUTATION (5 FEATURES) ==================
-# ======================================================================
-
 def compute_features_5f(fhr, uc, fs):
-    samples_per_min = max(1, int(fs * 60))
-
-    # ---- Baseline: first 1 minute ----
+    samples_per_min = max(1, int(fs*60))
     baseline = float(np.median(fhr[:samples_per_min]))
-
-    # ---- RAW variability (std) ----
     std_val = float(np.std(fhr[:samples_per_min]))
-
-    # ---- Convert STD → Variability Category ----
-    if std_val < 5:
-        variability = 0         # absent
-    elif std_val < 10:
-        variability = 1         # reduced
-    elif std_val < 25:
-        variability = 2         # moderate
-    else:
-        variability = 3         # increased
-
-    # ---- First 20 minutes ----
+    if std_val < 5: variability = 0
+    elif std_val < 10: variability = 1
+    elif std_val < 25: variability = 2
+    else: variability = 3
     samples_20 = samples_per_min * 20
     fwin = fhr[:samples_20]
-
     def detect(kind):
         amp = 15
-        dur = int(fs * 15)
-        N = len(fwin)
-        i = 0
-        c = 0
-        while i < N:
-            if kind == "accel" and fwin[i] > baseline + amp:
-                s = i
-                while i < N and fwin[i] > baseline + 5:
-                    i += 1
-                if i - s >= dur:
-                    c += 1
-            elif kind == "decel" and fwin[i] < baseline - amp:
-                s = i
-                while i < N and fwin[i] < baseline - 5:
-                    i += 1
-                if i - s >= dur:
-                    c += 1
+        dur = int(fs*15)
+        N=len(fwin)
+        i=0
+        c=0
+        while i<N:
+            if kind=="accel" and fwin[i]>baseline+amp:
+                s=i
+                while i<N and fwin[i]>baseline+5: i+=1
+                if i-s>=dur: c+=1
+            elif kind=="decel" and fwin[i]<baseline-amp:
+                s=i
+                while i<N and fwin[i]<baseline-5: i+=1
+                if i-s>=dur: c+=1
             else:
-                i += 1
+                i+=1
         return c
-
     acceleration = detect("accel")
     deceleration = detect("decel")
-
-    # ---- Uterine contractions using peaks ----
-    peaks, _ = find_peaks(uc, height=np.mean(uc) + 0.2)
+    peaks,_ = find_peaks(uc, height=np.mean(uc)+0.2)
     uterine = len(peaks)
-
     return {
         "acceleration": acceleration,
         "deceleration": deceleration,
-        "baseline": float(round(baseline, 2)),
+        "baseline": round(float(baseline),2),
         "uterine_contraction": uterine,
         "variability": variability
     }
 
-
-# ======================================================================
-# ============================== API ===================================
-# ======================================================================
-
+# ------------------------------------------------------------
+# PREDICTION ENDPOINT
+# ------------------------------------------------------------
 @app.post("/predict/")
 async def predict(file: UploadFile = File(...)):
     contents = await file.read()
-
-    with tempfile.NamedTemporaryFile(delete=False,suffix=".jpg") as tmp:
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmp:
         tmp.write(contents)
-        path=tmp.name
-
+        path = tmp.name
     try:
-        # --- Step 1: Binary CTG Check ---
         binary_label, score = classify_ctg_or_nonctg(path)
-
         if binary_label=="Non-CTG":
-            up=cloudinary.uploader.upload(path,folder="drukhealth_ctg")
-            return {"isCTG":False,"message":"Not a CTG graph","confidence":score,"imageUrl":up["secure_url"]}
-
-        # --- Step 2: Extract CTG signals ---
+            up = cloudinary.uploader.upload(path, folder="drukhealth_ctg")
+            return {"isCTG":False, "message":"Not a CTG graph", "confidence":score, "imageUrl":up["secure_url"]}
         fhr, uc, fs = extract_ctg_signals(path)
-
-        # --- Step 3: Compute 5 features ---
         features = compute_features_5f(fhr, uc, fs)
-
-        # --- Step 4: Prediction ---
-        df=pd.DataFrame([features])
-        pred_num=int(model_5f.predict(df)[0])
-        label=convert_to_client_label(pred_num)
-
-        # --- Step 5: Upload & Save ---
-        up=cloudinary.uploader.upload(path,folder="drukhealth_ctg")
-
-        record={
+        pred_num = int(model_5f.predict(pd.DataFrame([features]))[0])
+        label = convert_to_client_label(pred_num)
+        shap_contributions = None
+        if explainer:
+            shap_values = explainer(pd.DataFrame([features]))
+            shap_contributions = {col: float(val) for col, val in zip(features.keys(), shap_values.values[0])}
+        up = cloudinary.uploader.upload(path, folder="drukhealth_ctg")
+        record = {
             "timestamp": datetime.utcnow()+timedelta(hours=6),
             "isCTG": True,
             "binaryConfidence": score,
@@ -674,51 +624,81 @@ async def predict(file: UploadFile = File(...)):
             "features": features,
             "imageUrl": up["secure_url"]
         }
-        res=ctg_collection.insert_one(record)
-
+        res = ctg_collection.insert_one(record)
         return {
-            "isCTG":True,
-            "label":label,
-            "numeric":pred_num,
-            "features":features,
-            "confidence":score,
-            "imageUrl":up["secure_url"],
-            "record_id":str(res.inserted_id)
+            "isCTG": True,
+            "label": label,
+            "numeric": pred_num,
+            "features": features,
+            "confidence": score,
+            "imageUrl": up["secure_url"],
+            "record_id": str(res.inserted_id),
+            "feature_contributions": shap_contributions
         }
-
     finally:
         try: os.remove(path)
         except: pass
 
+# ------------------------------------------------------------
+# SHAP LOCAL EXPLANATION
+# ------------------------------------------------------------
+# @app.post("/api/explain")
+# async def explain(features: dict):
+#     if explainer is None:
+#         raise HTTPException(status_code=500, detail="SHAP explainer not initialized")
+#     try:
+#         X = pd.DataFrame([features])
+#         shap_values = explainer(X)
+#         return {
+#             "features": X.iloc[0].to_dict(),
+#             "contributions": {col: float(val) for col, val in zip(X.columns, shap_values.values[0])}
+#         }
+#     except Exception as e:
+#         raise HTTPException(status_code=500, detail=str(e))
 
+# ------------------------------------------------------------
+# FEATURE IMPORTANCE (GLOBAL)
+# ------------------------------------------------------------
+# @app.get("/api/feature-importance")
+# def feature_importance():
+#     if not hasattr(model_5f, "feature_importances_"):
+#         raise HTTPException(status_code=500, detail="Model does not have feature_importances_")
+#     return {"feature_importance": dict(zip(model_5f.feature_names_in_, model_5f.feature_importances_))}
+
+# ------------------------------------------------------------
+# RECORDS MANAGEMENT
+# ------------------------------------------------------------
 @app.get("/records")
 def records():
-    recs=list(ctg_collection.find().sort("timestamp",-1))
+    recs = list(ctg_collection.find().sort("timestamp",-1))
     return {"records":[
         {
-            "id":str(r["_id"]),
-            "timestamp":r.get("timestamp"),
-            "isCTG":r.get("isCTG"),
-            "binaryConfidence":r.get("binaryConfidence"),
-            "labelClient":r.get("labelClient"),
-            "features":r.get("features"),
-            "imageUrl":r.get("imageUrl")
-        } for r in recs
+            "id": str(r["_id"]),
+            "timestamp": r.get("timestamp"),
+            "isCTG": r.get("isCTG"),
+            "binaryConfidence": r.get("binaryConfidence"),
+            "labelClient": r.get("labelClient"),
+            "features": r.get("features"),
+            "imageUrl": r.get("imageUrl")
+        } 
+        for r in recs
     ]}
-
 
 @app.delete("/records/{record_id}")
 def delete_record(record_id):
-    r=ctg_collection.delete_one({"_id":ObjectId(record_id)})
+    r = ctg_collection.delete_one({"_id": ObjectId(record_id)})
     if r.deleted_count==0:
-        raise HTTPException(404,"Record not found")
+        raise HTTPException(status_code=404, detail="Record not found")
     return {"detail":"Record deleted"}
 
-
+# ------------------------------------------------------------
+# ANALYSIS
+# ------------------------------------------------------------
 @app.get("/api/analysis")
 def analysis():
     data=list(ctg_collection.find({},{"_id":0}))
-    if not data: return {"predictions":[], "nspStats":{"Normal":0,"Suspect":0,"Pathologic":0}}
+    if not data:
+        return {"predictions":[], "nspStats":{"Normal":0,"Suspect":0,"Pathologic":0}}
 
     df=pd.DataFrame(data)
     df["timestamp"]=pd.to_datetime(df["timestamp"])
@@ -737,7 +717,44 @@ def analysis():
     }
 
 
+@app.get("/api/feature-importance")
+def feature_importance():
+    """
+    Return global feature importance from the 5-feature model.
+    """
+    if not hasattr(model_5f, "feature_importances_"):
+        raise HTTPException(
+            status_code=500,
+            detail="Model does not provide feature_importances_.",
+        )
+
+    importances = model_5f.feature_importances_
+    feature_names = getattr(
+        model_5f,
+        "feature_names_in_",
+        ["acceleration", "deceleration", "baseline", "uterine_contraction", "variability"],
+    )
+    feature_names = list(feature_names)[: len(importances)]
+
+    return {
+        "feature_importance": dict(zip(feature_names, importances))
+    }
+
+
 # RUN
 if __name__=="__main__":
     import uvicorn
     uvicorn.run(app,host="0.0.0.0",port=8000)
+
+
+# RUN
+if __name__=="__main__":
+    import uvicorn
+    uvicorn.run(app,host="0.0.0.0",port=8000)
+
+# ------------------------------------------------------------
+# RUN
+# ------------------------------------------------------------
+if __name__=="main_":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
