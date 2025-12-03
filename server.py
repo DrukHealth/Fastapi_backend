@@ -1,4 +1,4 @@
-from fastapi import FastAPI, File, UploadFile, HTTPException
+from fastapi import FastAPI, File, UploadFile, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime, timedelta
 from pymongo import MongoClient
@@ -25,7 +25,6 @@ logging.basicConfig(level=logging.INFO)
 # ------------------------------------------------------------
 # FASTAPI APP
 # ------------------------------------------------------------
-
 app = FastAPI(title="Druk Health CTG – 5 Feature Model")
 
 # CORS for both local + Vercel + Render
@@ -44,15 +43,14 @@ app.add_middleware(
 )
 
 # ------------------------------------------------------------
-# HEALTH CHECK (Render requires this)
+# HEALTH CHECK (Render HEAD + GET)
 # ------------------------------------------------------------
-@app.get("/", include_in_schema=False)
+@app.api_route("/", methods=["GET", "HEAD"], include_in_schema=False)
 def health_check():
-    return {
-        "status": "ok",
-        "service": "drukhealth",
-        "timestamp": datetime.utcnow().isoformat() + "Z",
-    }
+    return Response(
+        content='{"status": "ok"}',
+        media_type="application/json"
+    )
 
 # ------------------------------------------------------------
 # MongoDB
@@ -86,14 +84,12 @@ if not os.path.exists(MODEL_5F_PATH):
 model_5f = joblib.load(MODEL_5F_PATH)
 logging.info("✅ CTG 5-Feature Decision Tree Model Loaded")
 
-
 # ------------------------------------------------------------
 # Load CNN Model
 # ------------------------------------------------------------
 CNN_PATH = "CTG_vs_NonCTG(1).keras"
 binary_ctg_model = tf.keras.models.load_model(CNN_PATH)
 logging.info("✅ CTG vs Non-CTG CNN Loaded")
-
 
 # ======================================================================
 # ===================== IMAGE → SIGNAL PROCESSING ======================
@@ -105,11 +101,12 @@ def classify_ctg_or_nonctg(img_path):
     score = float(binary_ctg_model.predict(arr)[0][0])
     return ("CTG" if score > 0.5 else "Non-CTG"), score
 
-
 def detect_grid(gray):
     blur = cv2.GaussianBlur(gray, (5, 5), 0)
-    th = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_MEAN_C,
-                               cv2.THRESH_BINARY_INV, 21, 7)
+    th = cv2.adaptiveThreshold(
+        blur, 255, cv2.ADAPTIVE_THRESH_MEAN_C,
+        cv2.THRESH_BINARY_INV, 21, 7
+    )
     h, w = th.shape
 
     horiz_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (w // 15, 1))
@@ -126,12 +123,12 @@ def detect_grid(gray):
 
     return int(np.median(spacing) * 5)
 
-
 def extract_trace(roi):
     blur = cv2.GaussianBlur(roi, (3, 3), 0)
-    th = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_MEAN_C,
-                               cv2.THRESH_BINARY_INV, 15, 5)
-
+    th = cv2.adaptiveThreshold(
+        blur, 255, cv2.ADAPTIVE_THRESH_MEAN_C,
+        cv2.THRESH_BINARY_INV, 15, 5
+    )
     h, w = th.shape
     ys = []
 
@@ -145,7 +142,6 @@ def extract_trace(roi):
     ys[np.isnan(ys)] = np.interp(xs[np.isnan(ys)], xs[~np.isnan(ys)], ys[~np.isnan(ys)])
 
     return ys
-
 
 def extract_ctg_signals(path):
     img = cv2.imread(path)
@@ -181,17 +177,14 @@ def extract_ctg_signals(path):
 
     return fhr_bpm, uc_norm, fs
 
-
 # ======================================================================
 # ======================= 5-FEATURE EXTRACTION ==========================
 # ======================================================================
 def compute_features_5f(fhr, uc, fs):
     samples_per_min = max(1, int(fs * 60))
     baseline = float(np.median(fhr[:samples_per_min]))
-
     std_val = float(np.std(fhr[:samples_per_min]))
 
-    # Variability categories
     if std_val < 5:
         variability = 0
     elif std_val < 10:
@@ -208,7 +201,6 @@ def compute_features_5f(fhr, uc, fs):
         amp = 15
         dur = int(fs * 15)
         N = len(fwin)
-
         c = 0
         i = 0
 
@@ -219,12 +211,14 @@ def compute_features_5f(fhr, uc, fs):
                     i += 1
                 if i - s >= dur:
                     c += 1
+
             elif kind == "decel" and fwin[i] < baseline - amp:
                 s = i
                 while i < N and fwin[i] < baseline - 5:
                     i += 1
                 if i - s >= dur:
                     c += 1
+
             else:
                 i += 1
         return c
@@ -243,7 +237,6 @@ def compute_features_5f(fhr, uc, fs):
         "variability": variability,
     }
 
-
 # ======================================================================
 # ============================= PREDICT ================================
 # ======================================================================
@@ -256,7 +249,6 @@ async def predict(file: UploadFile = File(...)):
         path = tmp.name
 
     try:
-        # Binary check
         label_bin, score = classify_ctg_or_nonctg(path)
 
         if label_bin == "Non-CTG":
@@ -305,7 +297,6 @@ async def predict(file: UploadFile = File(...)):
         except:
             pass
 
-
 # ======================================================================
 # ========================== RECORD ENDPOINTS ===========================
 # ======================================================================
@@ -327,14 +318,12 @@ def get_records():
         ]
     }
 
-
 @app.delete("/records/{record_id}")
 def delete_record(record_id: str):
     r = ctg_collection.delete_one({"_id": ObjectId(record_id)})
     if r.deleted_count == 0:
         raise HTTPException(404, "Record not found")
     return {"detail": "Record deleted"}
-
 
 # ======================================================================
 # ========================== ANALYSIS ==================================
@@ -353,10 +342,12 @@ def analysis():
     df["timestamp"] = pd.to_datetime(df["timestamp"])
     df["date"] = df["timestamp"].dt.strftime("%Y-%m-%d")
 
-    pivot = df.pivot_table(index="date",
-                           columns="classNumeric",
-                           aggfunc="size",
-                           fill_value=0)
+    pivot = df.pivot_table(
+        index="date",
+        columns="classNumeric",
+        aggfunc="size",
+        fill_value=0
+    )
 
     counts = df["classNumeric"].value_counts()
 
@@ -368,7 +359,6 @@ def analysis():
             "Pathologic": int(counts.get(3, 0)),
         },
     }
-
 
 # ======================================================================
 # ====================== FEATURE IMPORTANCE =============================
@@ -391,19 +381,17 @@ def feature_importance():
         }
     }
 
-
 # ======================================================================
 # =============================== RUN ==================================
 # ======================================================================
 if __name__ == "__main__":
     import uvicorn
 
-    # For Render → PORT is auto-set; for local Windows use 9000 (safe)
-    port = int(os.environ.get("PORT", 9000))
+    port = int(os.environ.get("PORT", 9000))  # 9000 local, $PORT in Render
 
     uvicorn.run(
-        "server:app",  # module:app
+        "server:app",
         host="0.0.0.0",
         port=port,
-        reload=False  # Important: prevents Windows WinError 10013
+        reload=False  # Required for Windows / Render stability
     )
